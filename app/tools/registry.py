@@ -343,10 +343,18 @@ class ToolRegistry:
         返回清洗后的 kwargs；参数非法时返回带 __invalid__ 标记的 dict。
         """
         # 别名映射：LLM 常写的参数名 → 函数真实参数名
+        #
+        # ★ 别名表必须"保守"：只收录语义明确等价的写法。
+        #   过度宽松会掩盖真实错误 —— 实测踩过的坑：
+        #   原先 begin_date / finish_date 也被映射成 start / end，
+        #   于是模型写了两个**完全错误**的参数名时，
+        #   系统静默纠偏并用默认值执行，返回了一个看似正常、
+        #   实际与请求区间无关的结果。
+        #   这类"静默算错"比直接报错危险得多 —— 报错会让模型改，
+        #   静默算错则会一路进入最终报告。
+        #   所以：明确的同义词保留，可疑的组合名一律拒绝。
         aliases = {
             "start_date": "start", "end_date": "end",
-            "begin": "start", "finish": "end",
-            "begin_date": "start", "finish_date": "end",
             "from_date": "start", "to_date": "end",
             "date_range": "days", "period_days": "days",
             "bucket": "bucket_days", "interval": "bucket_days",

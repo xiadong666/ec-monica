@@ -297,6 +297,24 @@ def test_tool_registry_health():
     add("参数别名自动纠正", "start_date → start",
         not (isinstance(r, dict) and r.get("ok") is False), weight=2.0)
 
+    # ★ 错误参数名必须被拒绝，不能被静默忽略。
+    #   踩过的坑：别名表里曾同时有 begin/finish 与 begin_date/finish_date，
+    #   映射过度宽松，导致模型写了两个完全错误的参数名时，
+    #   系统静默纠偏并用默认值执行 —— 返回一个看似正常、
+    #   实际与请求区间无关的结果。这类「静默算错」会一路进入最终报告，
+    #   比直接报错危险得多。用断言把这条行为固定下来，防止以后有人
+    #   往别名表里继续加名字时又把它放宽。
+    r_bad = registry.execute("scan_stockout", foo="2025-07-05", bar="2025-07-11")
+    add("错误参数名必须被拒", "不得静默忽略未知参数（防静默算错）",
+        isinstance(r_bad, dict) and r_bad.get("ok") is False, weight=3.0,
+        detail=f"实际返回：{str(r_bad)[:70]}")
+
+    # 同理：模型自造的「看似合理但错误」的组合名也要拒绝
+    r_bad2 = registry.execute("scan_stockout", begin_date="2025-07-05")
+    add("可疑组合名必须被拒", "begin_date 不属于等价别名",
+        isinstance(r_bad2, dict) and r_bad2.get("ok") is False, weight=2.0,
+        detail=f"实际返回：{str(r_bad2)[:70]}")
+
     # 错误分类
     r = registry.execute("run_sql", sql="SELECT bad_col FROM dim_product")
     add("错误分类为 data", "列名错误应归为可自我修正的 data 类",
