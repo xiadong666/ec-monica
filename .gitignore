@@ -65,5 +65,18 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# --- 浏览器自动化临时产物 ---
+# playwright-cli 会在工作目录生成快照与录屏，属于本地调试产物，
+# 不应进版本库（也不该出现在别人 clone 后的工作区里）。
+.playwright-cli/
+*.webm
+
+# --- 临时/调试文件 ---
+# 以 _ 开头的脚本与文件是本地调试用的，不提交
+scripts/_*.py
+docs/_*
+*.tmp
+*.bak
+
 # --- CI / 容器 ---
 # （.github/ 与 Dockerfile 需要提交，所以不排除）
