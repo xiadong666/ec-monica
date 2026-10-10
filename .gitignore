@@ -1,0 +1,69 @@
+# ==========================================================================
+# EC-Monica
+#
+# ★ 最重要的三条：.env / 数据 / 审计日志
+#   本项目曾出现 .env.example 里被写入真实 API Key 的情况 ——
+#   模板文件会被提交，等于公开泄露。所以密钥类文件必须显式排除。
+# ==========================================================================
+
+# --- 密钥与本地配置（绝对不能提交）---
+.env
+.env.*
+# ★ 取反规则必须独占一行，且不能用行尾注释。
+#   踩过的坑：写成 `!.env.example   # 模板要提交` 会让整行变成
+#   一个无效的模式匹配串，等于这条规则失效 ——
+#   .env.example 会被静默忽略，模板反而提交不上去。
+!.env.example
+*.pem
+*.key
+
+# --- 数据与审计 ---
+# data/ 与 *.db 排除是刻意的：他人克隆后跑
+# `python scripts/seed_data.py` 即可重建带 4 类归因陷阱的数据集，
+# 不必把二进制数据库塞进版本库（也避免误提交真实业务数据）。
+data/
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+audit*.jsonl
+
+# --- 生成产物 ---
+# ★ 注意：docs/ 与 *.docx **不再排除**。
+#   本项目 docs/ 下放的是设计文档与学习文档，是项目的一部分，
+#   面试官需要看到；排除掉等于把最有说服力的材料藏起来。
+reports/
+*.xlsx
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# --- 开发环境 ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- CI / 容器 ---
+# （.github/ 与 Dockerfile 需要提交，所以不排除）

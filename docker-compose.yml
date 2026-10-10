@@ -1,0 +1,67 @@
+# ==========================================================================
+# EC-Monica 本地/测试编排
+#
+# 用法：
+#   docker compose up -d --build
+#   docker compose logs -f api
+#   docker compose down -v          # 连数据卷一起删
+#
+# 生产部署时注意：
+#   · EC_JWT_SECRET 与 EC_USERS 必须由密钥管理系统注入，不要写在这里
+#   · EC_SESSION_BACKEND 必须是 redis（本文件已配好）
+# ==========================================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # 会话数据可容忍丢失（重新登录即可），所以不强制持久化，
+    # 但开启 AOF 能减少重启后的会话断裂
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # --- 基础设施 ---
+      EC_DB_PATH: /app/data/ec.db
+      EC_SESSION_BACKEND: redis
+      EC_REDIS_URL: redis://redis:6379/0
+      EC_AUDIT_LOG: /app/data/audit.log
+      EC_LOG_LEVEL: INFO
+
+      # --- 安全（本地演示用弱值，生产必须替换并从密钥管理注入）---
+      EC_JWT_SECRET: "change-me-in-production-use-a-long-random-string"
+      # EC_USERS 留空会启用开发默认账号 —— 生产必须显式配置
+      # EC_USERS: '{"alice":{"password_hash":"...","role":"analyst"}}'
+
+      # --- LLM ---
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      EC_LLM_MODEL: ${EC_LLM_MODEL:-deepseek-chat}
+    volumes:
+      # 数据持久化：SQLite 文件 + 审计日志
+      - api-data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  api-data:
+  redis-data:

@@ -1,0 +1,53 @@
+{
+  "_说明": "需求解析评估集。每条包含一段需求描述，以及解析结果必须覆盖的要素。覆盖要素缺失即视为不合格。",
+  "cases": [
+    {
+      "id": "req_new_metric",
+      "requirement": "我们希望在看板里新增一个「加购转化率」指标，就是加购人数除以访客数。运营那边说要按渠道看，也要能按商品看。",
+      "exams": "能否识别出：需要新增数据表字段、需要确认口径细节、影响下游看板",
+      "must_mention": ["加购", "口径", "渠道", "商品"],
+      "expected_clarifications": [
+        "加购人数是否需要按人去重（同一用户多次加购算一次还是多次）",
+        "是否包含历史数据回补"
+      ],
+      "expected_impacts": ["看板", "数据表"],
+      "highest_risk": "high"
+    },
+    {
+      "id": "req_order_status",
+      "requirement": "订单状态要加一个「部分退款」状态，退款金额小于订单金额的时候就是部分退款。",
+      "exams": "能否发现这是对现有事实表口径的破坏性改动 —— 会直接影响 GMV、退款率等所有下游指标",
+      "must_mention": ["退款", "GMV", "指标", "历史"],
+      "expected_clarifications": [
+        "历史订单是否需要回标为部分退款",
+        "跨多次部分退款如何处理"
+      ],
+      "expected_impacts": ["指标口径", "报表", "历史数据"],
+      "highest_risk": "high"
+    },
+    {
+      "id": "req_export",
+      "requirement": "商品列表页加一个导出 Excel 的按钮，导出当前筛选条件下的所有商品。",
+      "exams": "相对简单的需求，考察是否会过度设计，以及能否识别大数据量边界",
+      "must_mention": ["导出", "筛选"],
+      "expected_clarifications": [
+        "导出数据量上限（是否会因为全量导出导致超时）"
+      ],
+      "expected_impacts": ["商品列表页"],
+      "highest_risk": "medium"
+    },
+    {
+      "id": "req_vague",
+      "requirement": "把数据分析那块优化一下，现在太慢了。",
+      "exams": "★ 需求极度模糊，考察是否会臆测需求。正确行为是大量澄清问题 + 低置信度，而非编造方案",
+      "must_mention": ["澄清"],
+      "expected_clarifications": [
+        "具体是哪个页面或哪个查询慢",
+        "可接受的响应时间目标是多少"
+      ],
+      "expected_impacts": [],
+      "highest_risk": "medium",
+      "expect_low_confidence": true
+    }
+  ]
+}

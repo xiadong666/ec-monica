@@ -1,0 +1,35 @@
+# ==========================================================
+# EC-Monica 依赖清单（Python 3.11）
+# 安装：pip install -r requirements.txt
+#
+# 版本说明：langchain / langgraph 的版本组合沿用已被验证过的搭配
+#          （langgraph 1.0.x 有 bug，导入 create_agent 会报 ExecutionInfo 缺失）。
+# ==========================================================
+
+# --- Agent / LLM 框架 ---
+langchain==1.2.18          # create_agent 统一入口、@tool 装饰器
+langchain-openai==1.6.1    # OpenAI 兼容客户端（DeepSeek 走这个接口）
+langgraph==1.1.10          # 图编排运行时（对照实现，生产走显式控制流）
+
+# --- Web 服务 ---
+fastapi==0.141.1
+uvicorn==0.52.4
+
+# --- 配置 ---
+python-dotenv==1.2.3
+
+# --- 指标层 ---
+# 指标计算刻意只用标准库 sqlite3 + 纯 Python，
+# 避免 pandas 版本差异导致口径漂移（可复现优先）。
+#
+# --- 安全与可观测 ---
+# 认证（JWT/PBKDF2）、限流、结构化日志、审计**全部用标准库实现**，
+# 不引入额外依赖 —— 这样项目可以零障碍运行，也减少供应链风险。
+# 代价是：生产环境建议替换为成熟库（见 README 的进阶建议）。
+#
+# --- 可选：多副本部署 ---
+# 会话外置到 Redis 时需要。单实例运行（EC_SESSION_BACKEND=memory）不需要。
+# redis>=5.0.0
+
+# --- 可选：文档生成 ---
+# python-docx==1.2.0

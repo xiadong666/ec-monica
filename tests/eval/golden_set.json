@@ -1,0 +1,144 @@
+{
+  "_说明": "取数/归因评估集。expect_* 字段用于自动化判分（tests/test_eval.py）。weight 表示该题在总分中的权重（陷阱题权重更高，因为它们最能区分能力）。",
+  "cases": [
+    {
+      "id": "basic_gmv",
+      "question": "2025-08-18 到 2025-08-24 这一周的成交额是多少？",
+      "exams": "最基础的取数能力：能否正确调用指标工具并给出准确数字",
+      "expect_tool": "compare_weeks",
+      "expect_value": 123012.88,
+      "expect_metric": "gmv_gross",
+      "tolerance": 1.0,
+      "weight": 2.0
+    },
+    {
+      "id": "basic_orders",
+      "question": "上周（2025-08-18~08-24）一共多少笔支付订单？",
+      "exams": "基础取数",
+      "expect_tool": "compare_weeks",
+      "expect_value": 632,
+      "expect_metric": "paid_orders",
+      "tolerance": 0,
+      "weight": 1.0
+    },
+    {
+      "id": "basic_cvr",
+      "question": "2025-08-18~08-24 的支付转化率是多少？",
+      "exams": "比率类指标，检查是否用对分母（visitors 而非 impressions）",
+      "expect_tool": "compare_weeks",
+      "expect_value": 0.0271,
+      "expect_metric": "pay_cvr",
+      "tolerance": 0.0005,
+      "weight": 1.5
+    },
+    {
+      "id": "basic_aov",
+      "question": "上周的客单价是多少？",
+      "exams": "是否优先用指标工具而非自己写 SQL（自写 SQL 容易漏口径）",
+      "expect_tool": "compare_weeks",
+      "expect_value": 194.64,
+      "expect_metric": "aov",
+      "tolerance": 1.0,
+      "weight": 1.5
+    },
+    {
+      "id": "date_range",
+      "question": "数据库里的数据覆盖哪些日期？",
+      "exams": "是否会先确认数据范围，避免查询不存在的区间被误判为业务下滑",
+      "expect_tool": "get_data_range",
+      "expect_value": "2025-06-01 ~ 2025-08-29",
+      "tolerance": 0,
+      "weight": 1.0
+    },
+    {
+      "id": "product_ranking",
+      "question": "上周 GMV 最高的三个商品是哪些？",
+      "exams": "下钻排序能力",
+      "expect_tool": "get_product_breakdown",
+      "expect_value": ["P004", "P009", "P006"],
+      "expect_contains": ["P004", "P009", "P006"],
+      "tolerance": 0,
+      "weight": 1.5
+    },
+    {
+      "id": "roi_scope",
+      "question": "全店整体 ROI 是多少？",
+      "exams": "口径陷阱：ROI 只能从 fact_daily_traffic 算，不能 join 商品表（会导致 GMV 翻倍）",
+      "expect_tool": "get_channel_breakdown",
+      "expect_value": null,
+      "expect_behavior": "应说明只有付费/直播渠道有投放花费；若给出全店 ROI，需说明其口径",
+      "weight": 1.5
+    },
+    {
+      "id": "exclude_promo",
+      "question": "618 大促那一周（2025-06-16~06-20）的日常经营水平如何？请给出排除大促影响后的数字。",
+      "exams": "是否理解「剔除特殊日期」的口径，而不是直接把大促峰值当日常水平",
+      "expect_tool": "get_period_summary",
+      "expect_value": null,
+      "expect_behavior": "应说明该区间全部为特殊日期，或使用 exclude_special=True 并说明剩余样本天数",
+      "weight": 1.5
+    },
+    {
+      "id": "refund_quality",
+      "question": "上周的真实经营质量怎么样？不要只看 GMV。",
+      "exams": "是否使用净成交额/退款率，而不是只看 GMV 毛数",
+      "expect_tool": "compare_weeks",
+      "expect_value": null,
+      "expect_behavior": "应同时给出净成交额与退款率，并解释二者与 GMV 的差异含义",
+      "expect_contains": ["净"],
+      "weight": 1.5
+    },
+    {
+      "id": "trap_stockout",
+      "question": "上周转化率下滑了，是详情页出问题了吗？",
+      "exams": "核心陷阱题：缺货导致的转化下滑，绝不能被归因为详情页问题",
+      "expect_tool": "run_quality_checks",
+      "expect_value": null,
+      "expect_trap": "STOCKOUT_FOUND",
+      "expect_behavior": "必须先指出存在缺货（P001，8 天），并明确否定「是详情页问题」这一归因",
+      "expect_contains": ["缺货"],
+      "expect_forbidden": ["是详情页问题", "详情页导致", "详情页的问题"],
+      "weight": 3.0,
+      "trap_period": ["2025-07-05", "2025-07-11"]
+    },
+    {
+      "id": "trap_price_change",
+      "question": "P002 最近转化率变差，是什么原因？",
+      "exams": "陷阱题：识别「悄悄涨价」而非产品力下降",
+      "expect_tool": "scan_price_change",
+      "expect_value": null,
+      "expect_trap": "PRICE_CHANGE_DETECTED",
+      "expect_behavior": "应指出 P002 实际售价上涨约 18%，并用价格弹性解释转化下滑",
+      "expect_contains": ["涨"],
+      "weight": 3.0
+    },
+    {
+      "id": "trap_ad_diminishing",
+      "question": "付费渠道 ROI 从 16 掉到 12，是不是该把这个渠道关掉？",
+      "exams": "陷阱题：识别「边际递减」，正确动作是优化投放结构而不是关停渠道",
+      "expect_tool": "get_ad_trend",
+      "expect_value": null,
+      "expect_trap": "AD_DIMINISHING_RETURN",
+      "expect_behavior": "应指出花费自 2025-08-01 起上升约 30%，属于边际递减；应优化投放结构，且指出当前 ROI 仍为正、关停前需对比盈亏平衡线",
+      "weight": 3.0
+    },
+    {
+      "id": "trap_channel_mix",
+      "question": "整体转化率下跌，是不是所有渠道都变差了？",
+      "exams": "辛普森悖论：整体转化率可能因低转化渠道占比升高而下降，而非各渠道内部恶化",
+      "expect_tool": "get_channel_breakdown",
+      "expect_value": null,
+      "expect_behavior": "应分渠道对比转化率与访客占比，区分「结构变化」与「渠道内部恶化」",
+      "weight": 2.0
+    },
+    {
+      "id": "insufficient_sample",
+      "question": "2025-08-29 这一天的销售趋势如何？",
+      "exams": "单日数据不得用于趋势结论，且样本不足时 confidence 必须为 low",
+      "expect_tool": "get_period_summary",
+      "expect_value": null,
+      "expect_behavior": "应指出样本仅 1 天，不足以判断趋势，confidence 标为 low",
+      "weight": 2.0
+    }
+  ]
+}

@@ -1,0 +1,317 @@
+# ==========================================================================
+# EC-Monica CI
+#
+# 核心目的：**防止 prompt / 代码改动导致能力退化**。
+#
+# 本项目有 4 套验收脚本（共 300+ 项检查），但它们不会自动跑 ——
+# 改一行 prompt 就可能让归因能力悄悄退化，而没有人会发现。
+# 把它接进 CI 是"评估自动化"的落地，也是企业级与原型的分界线之一。
+#
+# 分层策略（与本地一致）：
+#   ① 确定性层（不依赖 LLM）—— 每次都跑，快，必须绿
+#   ② 架构层（不依赖 LLM）—— 每次都跑
+#   ③ 工作流层（离线假 LLM）—— 每次都跑
+#   ④ 真实 LLM 端到端 —— 只在有密钥时跑（fork 的 PR 拿不到密钥）
+# ==========================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  # ----------------------------------------------------------------------
+  # 代码质量：语法、导入
+  # ----------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 语法编译检查
+        run: python -m compileall -q app scripts tests
+
+      - name: 模块导入检查
+        run: |
+          python -c "
+          import importlib, sys
+          mods = ['app.main','app.auth','app.deps','app.ratelimit','app.session',
+                  'app.observability','app.tools.registry','app.tools.parallel',
+                  'app.workflow.engine','app.workflow.loop','app.workflow.intent',
+                  'app.metrics.compute','app.quality.checks','app.db.adapter']
+          bad = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+              except Exception as e:
+                  bad.append(f'{m}: {type(e).__name__}: {e}')
+          if bad:
+              print('导入失败:'); [print(' -', b) for b in bad]; sys.exit(1)
+          print(f'{len(mods)} 个模块导入正常')
+          "
+
+  # ----------------------------------------------------------------------
+  # ★ pytest 评测：每次提交自动跑，输出准确率
+  #
+  #   · 默认只跑 offline 层（不依赖 LLM，秒级、免费、可复现）
+  #   · live 层需要 API Key，单独放在 e2e-live job
+  #   · pg 层无 DATABASE_URL 时自动 skip，不会失败
+  #
+  #   准确率门槛 90% —— 低于它 CI 失败。
+  #   这样"改了 prompt 导致能力退化"会在合并前被拦住，
+  #   而不是上线后靠用户反馈发现。
+  # ----------------------------------------------------------------------
+  pytest:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 生成测试数据（含 4 类归因陷阱）
+        run: python scripts/seed_data.py
+
+      - name: ★ 运行评测（输出准确率）
+        run: |
+          pytest tests/ \
+            --accuracy-report \
+            --min-accuracy 0.90 \
+            --junitxml=reports/junit.xml \
+            -m "offline or pg"
+
+      - name: 提取准确率到 CI 摘要
+        if: always()
+        run: |
+          if [ -f reports/accuracy_summary.json ]; then
+            python - <<'PY' >> $GITHUB_STEP_SUMMARY
+          import json, pathlib
+          p = pathlib.Path("reports/accuracy_summary.json")
+          d = json.loads(p.read_text(encoding="utf-8"))
+          o = d["overall"]
+          print("## 评测准确率\n")
+          print(f"**总体：{o['accuracy']:.1%}**"
+                f"（{o['passed']}/{o['total']}），"
+                f"加权 {o['weighted_accuracy']:.1%}\n")
+          print("| 能力层 | 通过/总数 | 准确率 | 加权 |")
+          print("| --- | --- | --- | --- |")
+          for layer in d["layers"]:
+              print(f"| {layer['layer']} | {layer['passed']}/{layer['total']} "
+                    f"| {layer['accuracy']:.1%} | {layer['weighted_accuracy']:.1%} |")
+          PY
+          else
+            echo "未生成准确率报告" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 上传评测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: reports/
+          retention-days: 30
+
+  # ----------------------------------------------------------------------
+  # 五套验收脚本（与 pytest 互补：pytest 看准确率，这里看回归项）
+  # ----------------------------------------------------------------------
+  verify:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 生成测试数据（含 4 类归因陷阱）
+        run: python scripts/seed_data.py
+
+      - name: ① 地基验收（数据/指标/质控）
+        run: python scripts/verify_foundation.py
+
+      - name: ② 编排骨架验收
+        run: python scripts/verify_pipeline.py
+
+      - name: ③ 架构验收（Registry/容错/意图/上下文/硬约束/并行）
+        run: python scripts/verify_architecture.py
+
+      - name: ④ 工作流验收（离线假 LLM）
+        run: python scripts/verify_workflow.py
+
+      - name: ⑤ 企业级验收（认证/授权/限流/会话/审计）
+        run: python scripts/verify_enterprise.py
+
+  # ----------------------------------------------------------------------
+  # PostgreSQL 集成测试：起一个真实 PG，跑迁移并校验一致性
+  #
+  #   ★ 这是"换库"这件事的唯一真实验证 ——
+  #     适配逻辑可以在无 PG 时离线验证，但"真的连上能不能跑"
+  #     只有起了真实服务才知道。
+  # ----------------------------------------------------------------------
+  postgres:
+    runs-on: ubuntu-latest
+    needs: lint
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ecmonica
+          POSTGRES_PASSWORD: ecmonica_ci_pwd
+          POSTGRES_DB: ecmonica
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      EC_DB_BACKEND: postgres
+      DATABASE_URL: postgresql://ecmonica:ecmonica_ci_pwd@localhost:5432/ecmonica
+      EC_JWT_SECRET: ci-test-secret-not-for-production-use-only
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "psycopg[binary]"
+
+      - name: 生成 SQLite 源数据
+        run: python scripts/seed_data.py
+
+      - name: 迁移到 PostgreSQL（干跑检查）
+        run: python scripts/migrate_to_postgres.py --dry-run
+
+      - name: 迁移到 PostgreSQL
+        run: python scripts/migrate_to_postgres.py
+
+      - name: 迁移一致性校验
+        run: python scripts/migrate_to_postgres.py --verify-only
+
+      - name: ★ 在 PostgreSQL 后端上跑全部验收
+        run: python scripts/verify_foundation.py
+
+      - name: ★ 在 PostgreSQL 后端上跑 pytest（含 pg 标记用例）
+        run: pytest tests/ -m "offline or pg" --min-accuracy 0.90 -v
+
+  # ----------------------------------------------------------------------
+  # 真实 LLM 端到端：只在有密钥时跑
+  # ----------------------------------------------------------------------
+  e2e-live:
+    runs-on: ubuntu-latest
+    needs: [pytest, verify]
+    if: ${{ github.event_name == 'push' }}
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      EC_JWT_SECRET: ci-test-secret-not-for-production-use-only
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 生成测试数据
+        run: python scripts/seed_data.py
+
+      - name: 跳过条件检查
+        id: check
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "run=false" >> $GITHUB_OUTPUT
+            echo "未配置 DEEPSEEK_API_KEY，跳过真实端到端测试"
+          else
+            echo "run=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 真实 LLM 端到端（脚本）
+        if: steps.check.outputs.run == 'true'
+        run: python scripts/verify_workflow.py --live
+
+      - name: ★ 真实 LLM 评测准确率（在线层）
+        if: steps.check.outputs.run == 'true'
+        run: |
+          pytest tests/test_eval.py -m live \
+            --accuracy-report --min-accuracy 0.60 -v
+
+      - name: 上传在线评测报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports-live
+          path: reports/
+          retention-days: 30
+
+  # ----------------------------------------------------------------------
+  # Docker 镜像构建与健康检查验证
+  # ----------------------------------------------------------------------
+  docker:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t ec-monica:ci .
+
+      - name: 启动容器并验证健康检查
+        run: |
+          docker run -d --name ec-monica-ci -p 8000:8000 \
+            -e EC_JWT_SECRET=ci-test-secret-not-for-production \
+            ec-monica:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+              echo "健康检查通过（第 ${i} 次尝试）"
+              curl -sS http://127.0.0.1:8000/api/health
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "健康检查超时，输出容器日志："
+          docker logs ec-monica-ci
+          exit 1
+
+      - name: 清理
+        if: always()
+        run: docker rm -f ec-monica-ci || true
