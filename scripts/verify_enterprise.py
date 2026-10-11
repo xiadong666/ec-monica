@@ -54,6 +54,40 @@ client = TestClient(app)
 
 def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+# ===========================================================================
+# ★ 未捕获异常的诊断钩子
+# ===========================================================================
+# 背景：CI 上出现过「exit 1 但日志里没有 [FAIL]、也没有结论行」的情况 ——
+#      脚本是被未捕获异常中断的，而 traceback 混在长日志里很难发现。
+#      这个钩子把异常打成醒目块，直接 grep 即可：
+#          grep -A 40 "未捕获异常"
+#
+# 判定方式：用 sys.exc_info() 而不是自己维护标志位 ——
+#      正常退出时它返回 (None, None, None)，只有真的抛异常才有内容。
+#      （第一版用标志位判断，结果正常结束也误报，反而制造噪声。）
+def _install_crash_reporter(script_path: str) -> None:
+    import atexit
+    import os
+    import sys as _sys
+    import traceback as _tb
+
+    def _report() -> None:
+        exc_type, exc_value, exc_tb = _sys.exc_info()
+        if exc_type is None:
+            return                      # 正常退出，不打扰
+        print()
+        print("!" * 74)
+        print(f"!! {os.path.basename(script_path)} 未捕获异常 —— "
+              f"脚本被中断，未跑到结论行")
+        print("!" * 74)
+        _tb.print_exception(exc_type, exc_value, exc_tb)
+        print("!" * 74)
+        _sys.stdout.flush()
+
+    atexit.register(_report)
+
+
+_install_crash_reporter(__file__)
 
 
 # ===========================================================================
