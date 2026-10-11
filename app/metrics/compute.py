@@ -19,8 +19,27 @@ app/metrics/compute.py
 """
 from datetime import date, timedelta
 
-from app.db.database import readonly_query
+from app.db.database import db_config, readonly_query
 from app.metrics.definitions import SPECIAL_PERIODS
+
+
+def _r(expr: str, digits: int) -> str:
+    """
+    生成方言正确的「保留 digits 位小数」SQL 片段。
+
+    ★ 为什么不直接写 ROUND(x, 2)？
+      PostgreSQL 没有 ROUND(double precision, int) 这个重载，
+      对 DOUBLE PRECISION 列直接写会报：
+          ERROR: function round(double precision, integer) does not exist
+      必须转成 numeric。SQLite 则两种写法都能跑。
+
+      实测踩过的坑：本地只有 SQLite，全绿；CI 起了真实 PostgreSQL
+      才炸在 channel_breakdown 的 ROUND(SUM(ad_spend), 2) 上。
+
+      这样封装后，指标层写 SQL 时不必关心后端差异 ——
+      这正是适配层该承担的职责。
+    """
+    return db_config().dialect.round_sql(expr, digits)
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +256,7 @@ def product_breakdown(start: str, end: str) -> list[dict]:
       让 Agent 能自动区分"缺货型下跌"和"改价型下跌"。
     """
     rows = readonly_query(
-        """
+        f"""
         SELECT
             f.product_id,
             p.title,
@@ -251,9 +270,9 @@ def product_breakdown(start: str, end: str) -> list[dict]:
             SUM(f.visitors)                             AS visitors,
             SUM(f.impressions)                          AS impressions,
             -- 实际成交单价（受折扣/件数结构影响，仅作参考）
-            ROUND(SUM(f.gmv) / NULLIF(SUM(f.paid_units), 0), 2) AS revenue_per_unit,
+            {_r('SUM(f.gmv) / NULLIF(SUM(f.paid_units), 0)', 2)} AS revenue_per_unit,
             -- ★ 区间内实际售价（价格快照均值），改价判断要用这个
-            ROUND(AVG(f.unit_price), 2)                 AS stat_price
+            {_r('AVG(f.unit_price)', 2)}                 AS stat_price
         FROM fact_daily_product f
         JOIN dim_product p ON p.product_id = f.product_id
         WHERE f.stat_date BETWEEN ? AND ?
@@ -421,13 +440,13 @@ def channel_breakdown(start: str, end: str) -> list[dict]:
       千万不要 join fact_daily_product，那会让 GMV 翻倍。
     """
     rows = readonly_query(
-        """
+        f"""
         SELECT
             channel,
             SUM(visitors)   AS visitors,
             SUM(orders)     AS orders,
             SUM(gmv)        AS gmv,
-            ROUND(SUM(ad_spend), 2) AS ad_spend
+            {_r('SUM(ad_spend)', 2)} AS ad_spend
         FROM fact_daily_traffic
         WHERE stat_date BETWEEN ? AND ?
         GROUP BY channel
@@ -670,11 +689,11 @@ def competitor_price_context(category: str, days: int = 30) -> list[dict]:
     start = end - timedelta(days=days - 1)
 
     return readonly_query(
-        """
+        f"""
         SELECT competitor,
                MIN(stat_date) AS from_date,
                MAX(stat_date) AS to_date,
-               ROUND(AVG(avg_price), 2) AS avg_price
+               {_r('AVG(avg_price)', 2)} AS avg_price
         FROM fact_daily_competitor
         WHERE category = ? AND stat_date BETWEEN ? AND ?
         GROUP BY competitor

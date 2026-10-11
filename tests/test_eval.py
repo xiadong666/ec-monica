@@ -372,9 +372,24 @@ def test_parallel_strategy():
             time.sleep(delay_ms / 1000)
             return {"ok": True}
 
-    fast = [ToolCallSpec("get_data_range", {}),
-            ToolCallSpec("compare_weeks", {}),
-            ToolCallSpec("scan_stockout", {})]
+    # ★ 用固定时延探针，不要用真实业务工具。
+    #   踩过的坑：最初用 get_data_range / compare_weeks / scan_stockout，
+    #   SQLite 上它们是毫秒级 → 判定串行 → 断言通过；
+    #   但 PostgreSQL 上要 174ms（有网络往返），系统判定「并行有净收益」
+    #   并启用并行 —— 系统的决策是对的，错的是断言的隐含假设
+    #   （它默认「这些工具一定快」）。
+    #   改成固定时延后，断言只验证决策逻辑，不受后端速度影响。
+    if registry.get("fast_probe") is None:
+        @registry.register(capabilities=["drilldown"],
+                           description="快工具探针（测不并行）",
+                           timeout_s=30, max_retries=0)
+        def fast_probe(delay_ms: int = 3) -> dict:
+            time.sleep(delay_ms / 1000)
+            return {"ok": True}
+
+    fast = [ToolCallSpec("fast_probe", {"delay_ms": 3}),
+            ToolCallSpec("fast_probe", {"delay_ms": 3}),
+            ToolCallSpec("fast_probe", {"delay_ms": 3})]
     execute_batch(fast, force_parallel=False)
     ok_fast, reason = _should_parallelize(fast)
 

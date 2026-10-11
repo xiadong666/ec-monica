@@ -54,6 +54,41 @@ class Dialect(ABC):
         """统计 `?` 占位符个数（用于校验参数数量）。"""
         return _strip_literals(sql).count("?")
 
+    def round_sql(self, expr: str, digits: int) -> str:
+        """
+        生成「保留 digits 位小数」的 SQL 表达式。
+
+        ★ 为什么需要按方言区分？两个 PostgreSQL 特有的坑：
+
+          坑 1：ROUND 的重载不匹配
+            PostgreSQL 有两个 ROUND 重载：
+                ROUND(numeric, int)          ← 存在
+                ROUND(double precision, int) ← **不存在**
+            所以对 DOUBLE PRECISION 列写 ROUND(x, 2) 会直接报：
+                ERROR: function round(double precision, integer) does not exist
+            而 SQLite 的 ROUND 接受任意数值类型。
+            本项目金额列刻意定义为 DOUBLE PRECISION（见 schema.py：
+            PG 的 REAL 只有 4 字节会丢精度），所以 PG 上必须显式转 numeric。
+
+          坑 2：返回类型会变成 Decimal
+            ROUND(numeric, n) 返回 **numeric**，psycopg 把它映射成
+            Python 的 decimal.Decimal，而不是 float。
+            下游代码拿它做算术会直接炸：
+                TypeError: unsupported operand type(s) for /: 'float' and 'decimal.Decimal'
+
+            所以不能只转 numeric —— 必须**再转回 double precision**，
+            让两种后端返回一致的 Python float 类型。
+
+          最终写法：ROUND(CAST(x AS NUMERIC), 2)::double precision
+          而 CAST(... AS DOUBLE PRECISION) 更标准，这里用后者。
+
+          实测踩过的坑：本地只有 SQLite 后端，一直全绿；
+          CI 起了真实 PostgreSQL 才依次炸出这两个问题。
+          又一个「离线全绿不等于能跑通」的实例。
+        """
+        inner = f"ROUND(CAST({expr} AS NUMERIC), {digits})"
+        return f"CAST({inner} AS DOUBLE PRECISION)"
+
 
 class SQLiteDialect(Dialect):
     name = "sqlite"
@@ -71,6 +106,14 @@ class PostgresDialect(Dialect):
 
     def placeholder(self, index: int) -> str:
         return "%s"
+
+    # ★ 这里**不要**再定义 round_sql —— 基类 Dialect.round_sql 的实现
+    #   （转 numeric 算 + 转回 double precision）就是 PG 需要的正确写法。
+    #   踩过的坑：曾在这里留了一个只转 numeric 的覆盖版本，
+    #   把基类的正确实现盖掉了，于是 Decimal 类型问题依然存在 ——
+    #   表现为「明明改对了却还是报同样的错」。
+    #   排查方法：打印 cfg.dialect.round_sql(...) 的返回值，
+    #   而不是只看基类源码。
 
     def adapt_sql(self, sql: str) -> str:
         """

@@ -413,9 +413,30 @@ from app.tools.parallel import (                              # noqa: E402
 from app.tools.registry import registry as _reg               # noqa: E402
 
 # 快工具：不应并行（线程池开销 > 收益）
-FAST = [ToolCallSpec("get_data_range", {}),
-        ToolCallSpec("compare_weeks", {}),
-        ToolCallSpec("scan_stockout", {})]
+#   ★ 用固定时延的探针工具而不是真实工具。
+#     踩过的坑：最初用 get_data_range / compare_weeks / scan_stockout
+#     这三个真实工具，在 SQLite 上确实很快（毫秒级）→ 判定串行 → 断言通过。
+#     但在 PostgreSQL 上它们要 174ms（有网络往返），系统判定「并行有净收益」
+#     并启用并行 —— 此时系统的决策是**正确的**，错的是断言的假设
+#     （它默认「工具一定快」）。
+#     改成固定时延探针后，这个断言只验证「决策逻辑」本身，
+#     不再受后端速度影响。
+if _reg.get("fast_tool_a") is None:
+    @_reg.register(capabilities=["drilldown"], description="快工具探针（测不并行）",
+                   timeout_s=30, max_retries=0)
+    def fast_tool_a(delay_ms: int = 3) -> dict:
+        time.sleep(delay_ms / 1000)
+        return {"ok": True}
+
+    @_reg.register(capabilities=["drilldown"], description="快工具探针（测不并行）",
+                   timeout_s=30, max_retries=0)
+    def fast_tool_b(delay_ms: int = 3) -> dict:
+        time.sleep(delay_ms / 1000)
+        return {"ok": True}
+
+FAST = [ToolCallSpec("fast_tool_a", {"delay_ms": 3}),
+        ToolCallSpec("fast_tool_b", {"delay_ms": 3}),
+        ToolCallSpec("fast_tool_a", {"delay_ms": 3})]
 execute_batch(FAST, force_parallel=False)      # 预热统计
 ok_fast, reason_fast = _should_parallelize(FAST)
 print(f"  快工具决策: {'并行' if ok_fast else '串行'} — {reason_fast[:70]}")

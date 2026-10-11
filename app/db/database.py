@@ -359,10 +359,16 @@ def friendly_sql_error(err: Exception, sql: str = "") -> dict:
             "hint": hint,
         }
 
-    # --- USING 关联失败 ---
-    if "cannot join using column" in text:
-        col = re.search(r"cannot join using column\s+(\S+)", text)
-        name = col.group(1) if col else "该列"
+    # --- USING 关联失败（两种数据库的报错文案完全不同，都要匹配）---
+    #   SQLite     : cannot join using column date - column not present in left table
+    #   PostgreSQL : column "date" specified in USING clause does not exist in left table
+    #   踩过的坑：最初只匹配了 SQLite 的文案，于是 PG 上这条友好提示失效，
+    #   Agent 拿到的是一句看不懂的英文报错，无法自我修正。
+    m_using = (re.search(r"cannot join using column\s+(\S+)", text)
+               or re.search(r'column\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s+'
+                            r"specified in USING clause", text))
+    if m_using:
+        name = m_using.group(1)
         return {
             "error": f"USING 关联失败：{name} 不是两张表共有的列",
             "hint": (
