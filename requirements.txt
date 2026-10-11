@@ -18,6 +18,18 @@ uvicorn==0.52.4
 # --- 配置 ---
 python-dotenv==1.2.3
 
+# --- 测试与评测 ---
+# ★ 必须写进依赖清单：CI 只装 requirements.txt，
+#   如果漏了 pytest，CI 的评测步骤会直接 `pytest: command not found`（退出码 127）。
+#   踩过的坑：本地是手动 pip install pytest 的，所以本地全绿、CI 直接失败 ——
+#   "在我机器上能跑" 的典型成因。
+pytest==9.1.1
+
+# --- 数据库驱动 ---
+# PostgreSQL 后端需要。SQLite 走标准库 sqlite3，不需要额外依赖。
+# 用 [binary] 额外装预编译包，避免 CI / 容器里还要装 libpq 开发头文件。
+psycopg[binary]==3.3.6
+
 # --- 指标层 ---
 # 指标计算刻意只用标准库 sqlite3 + 纯 Python，
 # 避免 pandas 版本差异导致口径漂移（可复现优先）。

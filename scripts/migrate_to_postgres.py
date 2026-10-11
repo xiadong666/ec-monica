@@ -90,12 +90,37 @@ def truncate_tables(pg: PostgresConnection) -> None:
       迁移脚本必须幂等。如果不先清空，第二次运行会主键冲突，
       或者（如果没有主键约束）静默产生重复数据 ——
       后者更危险，因为行数看起来"变多了"而不是报错。
+
+    ★ 为什么必须用「一条语句列出所有表」而不是逐表 TRUNCATE？
+      这是 PostgreSQL 与 MySQL 的一个重要差异：
+      PostgreSQL 的 TRUNCATE **不能逐个表执行** ——
+      只要该表被外键引用就会直接报错：
+
+          ERROR: cannot truncate a table referenced in a foreign key constraint
+          DETAIL: Table "fact_daily_product" references "dim_product".
+          HINT: Truncate table "fact_daily_product" at the same time,
+                or use TRUNCATE ... CASCADE.
+
+      注意 HINT 里的 "at the same time" —— 正确做法就是把所有表
+      写进同一条 TRUNCATE 语句，PostgreSQL 会在内部按依赖顺序处理：
+
+          TRUNCATE TABLE dim_product, fact_daily_product, ...
+
+      踩坑记录：最初按 MySQL 的习惯写成 reversed(MIGRATION_ORDER) 逐表循环，
+      本地没有 PG 所以一直是绿的，直到 CI 起了真实 PostgreSQL 才暴露。
+      这也是"离线全绿不等于能跑通"的又一个实例。
+
+      为什么不用 CASCADE？CASCADE 会连带清空所有引用表（包括脚本没打算
+      处理的表），范围不可控；显式列出所有表更安全。
     """
     print("\n[2/4] 清空目标表（保证幂等）")
-    for table in reversed(MIGRATION_ORDER):
-        pg.execute(f"TRUNCATE TABLE {table}")
+    tables = ", ".join(MIGRATION_ORDER)
+    pg.execute(f"TRUNCATE TABLE {tables}")
+    for table in MIGRATION_ORDER:
         print(f"      TRUNCATE {table}")
     pg.commit()
+    print(f"      完成，共清空 {len(MIGRATION_ORDER)} 张表（单条语句，"
+          f"由 PG 内部按外键依赖顺序处理）")
 
 
 def migrate_table(lite: SQLiteConnection, pg: PostgresConnection,
