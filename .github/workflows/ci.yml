@@ -214,13 +214,22 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: 安装依赖
+      # ★ 依赖安装拆成独立步骤，便于一眼看出是哪一步失败。
+      #   之前把三条命令写在同一个 run 里，失败时只能看到 "exit code 1"，
+      #   无法判断是 pip 升级、依赖清单还是 psycopg 的问题。
+      - name: 升级 pip
+        run: python -m pip install --upgrade pip
+
+      - name: 安装 requirements.txt
+        run: pip install -r requirements.txt
+
+      # psycopg[binary] 已在 requirements.txt 中，这里显式再装一次是为了
+      # 让本 job 对依赖清单的改动不敏感（PG 是这个 job 的核心前提）。
+      # --no-cache-dir：避免 CI 的 pip 缓存恢复出问题导致安装失败。
+      - name: 确保 psycopg 可用
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # psycopg[binary] 已在 requirements.txt 中，这里显式再装一次是为了
-          # 让本 job 对依赖清单的改动不敏感（PG 是这个 job 的核心前提）
-          pip install "psycopg[binary]"
+          pip install --no-cache-dir "psycopg[binary]"
+          python -c "import psycopg; print('psycopg', psycopg.__version__)"
 
       - name: 生成 SQLite 源数据
         run: python scripts/seed_data.py
