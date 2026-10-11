@@ -378,11 +378,38 @@ def classify(message: str, allow_llm: bool = True) -> IntentResult:
     意图识别主入口。
 
     流程：规则 → （无法确定且允许时）LLM → 兜底 → 单向硬约束后置校验
+
+    ★ 为什么这里要单独接住 LLMNotConfigured？
+      classify_by_llm() 会**刻意**把 LLMNotConfigured 向上抛，
+      好让 API 层快速失败并返回 503 指引（配置错误不该伪装成降级成功）。
+      但「规则未命中」时意图判定本身不该因为没配 Key 就整个崩掉 ——
+      它是可以降级的：保守地按「需要工具」处理即可。
+
+      实测踩过的坑：不接住的话，规则未命中的输入会让 classify() 直接抛异常。
+      本地 .env 里有 Key 所以一直没暴露，CI（没有 Key）上
+      verify_architecture.py 直接以未捕获异常中断 —— 这就是那个
+      「exit 1 但没有 [FAIL]、也没有结论行」的真正原因。
     """
     result = classify_by_rules(message)
     if result is None:
         if allow_llm:
-            result = classify_by_llm(message)
+            # ★ 必须在这里再 import 一次：LLMNotConfigured 原本是在
+            #   classify_by_llm() 内部导入的（局部作用域），函数外拿不到 ——
+            #   直接写 except LLMNotConfigured 会抛 NameError。
+            #   保持函数内导入的写法是为了避免与 app.llm 形成循环依赖。
+            from app.llm import LLMNotConfigured
+
+            try:
+                result = classify_by_llm(message)
+            except LLMNotConfigured as exc:
+                # 未配置 Key：降级为保守判定，不让整个流程崩掉。
+                # 注意：API 层仍会在真正需要调用 LLM 时快速失败（503），
+                #      这里只保证「意图判定」这一步可以降级。
+                result = _make(
+                    Intent.ANALYSIS_REPORT, 0.3, "fallback",
+                    f"规则未命中且未配置 LLM（{type(exc).__name__}），"
+                    f"保守地按「需要工具」处理。",
+                )
         else:
             result = _make(Intent.ANALYSIS_REPORT, 0.3, "fallback",
                            "规则未命中且未启用 LLM 判定，按「需要工具」保守处理。")
